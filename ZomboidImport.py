@@ -5,9 +5,11 @@ from bpy.props import FloatVectorProperty
 from bpy_extras.object_utils import AddObjectHelper, object_data_add
 from mathutils import Vector
 from mathutils import Matrix
+from mathutils import Quaternion
 from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
+import math
 
 class ZomboidImport(Operator, ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
@@ -91,21 +93,8 @@ class ZomboidImport(Operator, ImportHelper):
             boneParentIndex = self.read_int(file)
             boneName = self.read_line(file)
             
-            # Armature code. Will move.
-            
-            # bone = armature.edit_bones.new(boneName)
-            # bone.length = 1
-            # bone.tail = (0,0,1)
-            # bones.append(bone)
-            # if boneParentIndex >= 0:
-            #     bone_parent = bones[boneParentIndex]
-            #     bone.parent = bone_parent
-            # else:
-            #     bone.head = (0,0,1)
-            #     bone.tail = (0,0,0)
-
-            # print(boneName)
-            # print("boneParentIndex: " + str(boneParentIndex))
+            self.bone_names.append(boneName)
+            self.bone_parent.append(boneParentIndex)
 
     # Bind Pose:
     # (Int)    Bone Index
@@ -118,15 +107,8 @@ class ZomboidImport(Operator, ImportHelper):
                         
             bone_matrix = self.read_matrix(file)
             
-          
-            # Armature code. Will move.
-            # bone = self.bones[boneIndex]
-            # bone.matrix = bone_matrix
+            self.bone_matrix_bind_pose_data[index] = bone_matrix
             
-            # Test code
-            # if bone.parent != None:
-            #     bone.tail = bone.parent.head
-            #     bone.use_connect = True
 
     def read_bone_bind_inverse_pose_data(self,file):
         
@@ -135,9 +117,9 @@ class ZomboidImport(Operator, ImportHelper):
             boneIndex = self.read_int(file)
         
             matrix_inverse = self.read_matrix(file)
+            
+            self.bone_matrix_inverse_bind_pose_data[index] = matrix_inverse
 
-            # Armature code. Will move.
-            # bone = bones[boneIndex]
 
     def read_bone_offset_data(self,file):
         
@@ -147,11 +129,8 @@ class ZomboidImport(Operator, ImportHelper):
             
             bone_offset_matrix = self.read_matrix(file)
             
-            # Armature data. Will move.
-            # bone = bones[boneIndex]
-            # if bone.parent != None:
-            #     bone.head = bone.parent.tail
-            # bone.transform(bone_offset_matrix)
+            self.bone_matrix_offset_data[index] = bone_offset_matrix
+            
 
     def create_mesh(self):
         try:
@@ -173,9 +152,7 @@ class ZomboidImport(Operator, ImportHelper):
         bpy.ops.object.select_pattern(pattern=self.modelName)
         obj = bpy.context.active_object
         me = obj.data
-
-        # useful for development when the mesh may be invalid.
-        # mesh.validate(verbose=True)
+        
         bpy.ops.object.mode_set(mode = 'EDIT')
 
         bm = bmesh.from_edit_mesh(me)
@@ -201,39 +178,82 @@ class ZomboidImport(Operator, ImportHelper):
         bpy.ops.mesh.tris_convert_to_quads()
         bpy.ops.object.mode_set(mode = 'OBJECT')
 
+
     def create_armature(self):
-        # Clear selections and set to object mode.
         try:
             bpy.ops.object.mode_set(mode='OBJECT')
             bpy.ops.object.select_all(action='DESELECT')
         except:
             ok = None
         
-        self.armature = bpy.data.armatures.new(amtname)
+        self.armature = bpy.data.armatures.new(self.amtname)
+        ob = bpy.data.objects.new(self.amtname, self.armature)
+        scn = bpy.context.scene
+        scn.objects.link(ob)
+        scn.objects.active = ob
+        ob.select = True
         
-        self.object_armature = bpy.data.objects.new(amtname, armature)
-        
-        object_data_add(bpy.context, armature)
-        
-        bpy.ops.object.select_pattern(pattern=amtname)
         
         bpy.ops.object.mode_set(mode='EDIT')
         
-        #bone = armature.edit_bones.new('Bone')
-        #bone.head = (0,0,0)
-        #bone.tail = (0,0,1)
+        
+        bone = self.armature.edit_bones.new(self.bone_names[0])
+        self.bones.append(bone)
+        matrix_location = self.bone_matrix_offset_data[0]
+        mat = Matrix.Identity(4)
+        self.set_identity(mat)
+        
+        mat_world = matrix_location * mat
+        self.world_transforms.append(mat_world)
+        
+        bone.matrix = mat_world
+        bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
+        
+        for x in range(1, self.numberBones):
+            
+            bone = self.armature.edit_bones.new(self.bone_names[x])
+            self.bones.append(bone)
+            
+            parent_index = self.bone_parent[x]
+            
+            parent_bone = self.bones[parent_index]
+
+            
+            matrix_location = self.bone_matrix_offset_data[x]
+            matrix_rotation = self.bone_matrix_inverse_bind_pose_data[x]
+            
+            mat_world = matrix_location * self.bone_matrix_offset_data[parent_index].copy().inverted()
+            
+            
+            self.world_transforms.append(mat_world)
+            
+            mat = matrix_location.inverted().copy()
+            
+            bone.tail = mat.decompose()[0]
+            bone.head = parent_bone.tail
+            
+            if parent_index != -1:
+                if bone.tail[0] == 0 and bone.tail[1] == 0 and bone.tail[2] == 0:
+                    bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
+
+            bone.parent = parent_bone
+            bone.use_connect = True
+            
 
     def read_int(self,file):
         return int(self.read_line(file))
 
+
     def read_float(self,file):
         return float(self.read_line(file))
+
 
     def read_line(self,file):
         string = '#'
         while string.startswith("#"):
             string = str(file.readline().strip())
         return string
+
 
     def read_matrix(self,file):
         matrix_line = []
@@ -246,12 +266,32 @@ class ZomboidImport(Operator, ImportHelper):
             matrix_array.append(float(string_mat[3]))
             matrix_line.append((matrix_array[0],matrix_array[1],matrix_array[2],matrix_array[3]))
         return Matrix((matrix_line[0], matrix_line[1], matrix_line[2], matrix_line[3]))
-
-    def createObject(self, name, matrix):
-        bpy.ops.object.empty_add(type="SPHERE")
-        
-    def execute(self, context):
     
+    def set_identity(self, mat):
+        mat[0][0] = 1.0
+        mat[0][1] = 0.0
+        mat[0][2] = 0.0
+        mat[0][3] = 0.0
+        mat[1][0] = 0.0
+        mat[1][1] = 1.0
+        mat[1][2] = 0.0
+        mat[1][3] = 0.0
+        mat[2][0] = 0.0
+        mat[2][1] = 0.0
+        mat[2][2] = 1.0
+        mat[2][3] = 0.0
+        mat[3][0] = 0.0
+        mat[3][1] = 0.0
+        mat[3][2] = 0.0
+        mat[3][3] = 1.0
+
+    def execute(self, context):
+        
+        old_cursor = bpy.context.scene.cursor_location
+        
+        # Center the cursor.
+        bpy.context.scene.cursor_location = (0.0, 0.0, 0.0)
+        
         # The offset in the file read
         offset = 0
 
@@ -289,8 +329,11 @@ class ZomboidImport(Operator, ImportHelper):
                     
             # Close the file.
             file.close()
-        
+
+        self.create_armature()
         self.create_mesh()
+        
+        bpy.context.scene.cursor_location = old_cursor
         
         return {'FINISHED'}
         
@@ -298,10 +341,14 @@ class ZomboidImport(Operator, ImportHelper):
         self.vertexStrideData                   = dict()
         self.bone_matrix_bind_pose_data         = dict()
         self.bone_matrix_inverse_bind_pose_data = dict()
-        self.bone_map                           = dict()
-        self.bone_parent                        = dict()
         self.bone_matrix_offset_data            = dict()
+        self.bone_map                           = dict()
+        self.BlendWeightArray                   = dict()
+        self.BlendIndexArray                    = dict()
         
+        self.empties                            = []
+        self.bone_names                         = []
+        self.bone_parent                        = []
         self.vertexElements                     = []
         self.vertexStrideType                   = []
         self.vertexBuffer                       = []
@@ -312,6 +359,9 @@ class ZomboidImport(Operator, ImportHelper):
         self.edges                              = []
         self.faces                              = []
         self.bones                              = []
+        self.bone_location                      = []
+        self.quats                              = []
+        self.world_transforms                   = []
         
         self.modelName                          = ' '
         
@@ -324,8 +374,6 @@ class ZomboidImport(Operator, ImportHelper):
         self.NormalArray                        = 0
         self.TangentArray                       = 0
         self.TextureCoordArray                  = 0
-        self.BlendWeightArray                   = 0
-        self.BlendIndexArray                    = 0
         
         self.hasTex                             = False
         
