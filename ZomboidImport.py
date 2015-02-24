@@ -288,10 +288,76 @@ class ZomboidImport(Operator, ImportHelper):
             bone.parent = parent_bone
             # bone.use_connect = True
         
+        for x in range(1, self.numberBones):
+          
+            bone_name = self.bone_names[x]
+            bone = self.armature.edit_bones[bone_name]
+            bone_tail = bone.tail
+          
+            try:
+                if self.amtname == "bob_armature":
+                    if "Neck" in bone_name:
+                        bone.tail = bone.children[2].head
+                        continue
+
+                if bone.children != None:
+                    if bone.children[0] != None:
+                        bone.tail = bone.children[0].head
+            except:
+                bone.tail = bone_tail
+            
+            if bone.tail[0] == 0 and bone.tail[1] == 0 and bone.tail[2] == 0:      
+                bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
+            
+            if "Nub" in bone.name:
+                if bone.parent != None:
+                    bone.head = bone.parent.tail
+                else:
+                    bone.head = self.bone_matrix_offset_data[x].inverted().copy().decompose()[0]
+                
+                bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
+            
+            if "Foot" in bone.name:
+                bone.tail = Vector((bone.head[0], bone.head[1] - 0.05, bone.head[2]))
+                
+            if bone.parent != None:
+                if bone.parent.tail == bone.head:
+                    bone.use_connect = True
+            
+        for x in range(1, self.numberBones):
+          
+            bone_name = self.bone_names[x]
+            bone = self.armature.edit_bones[bone_name]
+            
+            if "Pelvis" in bone.name:
+                new_parent = bone.children[0]
+                bone.use_connect = False
+                new_parent.parent = None
+                bpy.ops.armature.select_all(action='DESELECT')
+                bone.select = True
+                # bpy.ops.armature.switch_direction()
+                bone.parent = new_parent
+                break
+        
         obj_armature = bpy.data.objects[self.amtname]
         obj_armature.show_x_ray = True
-            
-
+        
+        bpy.ops.armature.select_all(action='SELECT')
+        bpy.ops.armature.calculate_roll(type='GLOBAL_Z')
+        
+        
+        bpy.ops.armature.select_all(action='DESELECT')
+        self.bones[0].select = True
+        self.bones[1].select = True
+        
+        for x in range(1, self.numberBones):
+            bone_name = self.bone_names[x]
+            bone = self.armature.edit_bones[bone_name]
+            if "Nub" in bone.name or (bone.head[0] == 0 and bone.head[1] == 0 and bone.head[2] == 0):
+                bone.select = True
+        
+        bpy.ops.armature.delete()
+        
     def read_int(self,file):
         return int(self.read_line(file))
 
