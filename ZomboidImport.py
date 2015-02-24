@@ -13,7 +13,9 @@ import math
 
 class ZomboidImport(Operator, ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
-    bl_idname = "zomboid.import_model"  # important since its how bpy.ops.import_test.some_data is constructed
+    
+    # important since its how bpy.ops.import_test.some_data is constructed
+    bl_idname = "zomboid.import_model"
     bl_label = "Import a Zomboid Model"
     
     # Get the current scene
@@ -51,22 +53,26 @@ class ZomboidImport(Operator, ImportHelper):
             elementArray = []
         
             for element in range(0,self.vertexStrideElementCount):
-        
-                line = self.read_line(file)
-        
-                elementArray.append(line)
-                
+                                
                 if self.vertexStrideType[element] == "VertexArray":
-
+                    
+                    line = self.read_line(file)
                     vs = line.split(', ')
 
                     self.verts.append(Vector((float(vs[0]), float(vs[1]), float(vs[2]))))
 
                 elif self.vertexStrideType[element] == "TextureCoordArray":
-
+                    line = self.read_line(file)
                     vs = line.split(', ')
 
                     self.uvs.append(Vector((float(vs[0]),float(1) - float(vs[1]))))
+                    
+                elif self.vertexStrideType[element] == "BlendWeightArray":
+                    self.read_vertex_weight_values(file)
+                elif self.vertexStrideType[element] == "BlendIndexArray":
+                    self.read_vertex_weight_indexes(file)
+                else:
+                    line = self.read_line(file)
                     
     def read_faces(self,file):
         for x in range(0,self.numberOfFaces):
@@ -92,6 +98,8 @@ class ZomboidImport(Operator, ImportHelper):
             boneIndex = self.read_int(file)
             boneParentIndex = self.read_int(file)
             boneName = self.read_line(file)
+            
+            self.bone_ids[boneName] = boneIndex
             
             self.bone_names.append(boneName)
             self.bone_parent.append(boneParentIndex)
@@ -157,8 +165,9 @@ class ZomboidImport(Operator, ImportHelper):
 
         bm = bmesh.from_edit_mesh(me)
 
+        # currently blender needs both layers.
         uv_layer = bm.loops.layers.uv.verify()
-        bm.faces.layers.tex.verify()  # currently blender needs both layers.
+        bm.faces.layers.tex.verify()
 
         voffset = 0
         # adjust UVs
@@ -170,8 +179,45 @@ class ZomboidImport(Operator, ImportHelper):
                 luv = l[uv_layer]
                 luv.uv = uv_array[vo]
                 vo += 1
-
+        
         bmesh.update_edit_mesh(me)
+        
+        if self.has_armature:
+            obj_armature = bpy.data.objects[self.amtname]
+            
+            
+            bpy.ops.object.select_pattern(pattern=self.modelName)
+            obj.parent = obj_armature
+            obj.parent_type = 'ARMATURE'
+            modifier = bpy.ops.object.modifier_add(type='ARMATURE')
+            
+            bpy.ops.object.mode_set(mode = 'OBJECT')
+            
+            for bone in self.armature.bones:
+                bpy.ops.object.vertex_group_add()
+                vertex_group = obj.vertex_groups.active    
+                vertex_group.name = bone.name
+                
+                bone_import_index = self.bone_ids[bone.name]
+                
+                
+                
+                offset_vert = 0
+                for vertex in me.vertices:
+                    vertex_weight_ids = self.BlendIndexArray[offset_vert]
+                    vertex_weights = self.BlendWeightArray[offset_vert]
+                    
+                    offset = 0
+                    for vert_weight_id in vertex_weight_ids:
+                        if vert_weight_id == bone_import_index:
+                            verts = []
+                            verts.append(vertex.index)
+                            vertex_group.add(verts, vertex_weights[offset], 'REPLACE')
+                        offset += 1
+                    
+                    offset_vert += 1
+
+        bpy.ops.object.mode_set(mode = 'EDIT')
 
         # Optimize mesh
         bpy.ops.mesh.remove_doubles()
@@ -229,15 +275,21 @@ class ZomboidImport(Operator, ImportHelper):
             
             mat = matrix_location.inverted().copy()
             
-            bone.tail = mat.decompose()[0]
-            bone.head = parent_bone.tail
+            # bone.tail = mat.decompose()[0]
+            # bone.head = parent_bone.tail
+            
+            bone.head = mat.decompose()[0]
+            bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
             
             if parent_index != -1:
                 if bone.tail[0] == 0 and bone.tail[1] == 0 and bone.tail[2] == 0:
                     bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
 
             bone.parent = parent_bone
-            bone.use_connect = True
+            # bone.use_connect = True
+        
+        obj_armature = bpy.data.objects[self.amtname]
+        obj_armature.show_x_ray = True
             
 
     def read_int(self,file):
@@ -267,6 +319,25 @@ class ZomboidImport(Operator, ImportHelper):
             matrix_line.append((matrix_array[0],matrix_array[1],matrix_array[2],matrix_array[3]))
         return Matrix((matrix_line[0], matrix_line[1], matrix_line[2], matrix_line[3]))
     
+    def read_vertex_weight_values(self,file):
+        weights = self.read_line(file)
+        split = weights.split(", ")
+        
+        array = []
+        
+        for s in split:
+            array.append(float(s))
+        
+        self.BlendWeightArray.append(array)
+    
+    def read_vertex_weight_indexes(self,file):
+        indexes = self.read_line(file)
+        split = indexes.split(", ")
+        array = []
+        for s in split:
+            array.append(int(s))
+        self.BlendIndexArray.append(array)
+        
     def set_identity(self, mat):
         mat[0][0] = 1.0
         mat[0][1] = 0.0
@@ -313,6 +384,7 @@ class ZomboidImport(Operator, ImportHelper):
                     elif offset == 6:
                         try:
                             self.numberBones = self.read_int(file)
+                            self.has_armature = True
                         except:
                             end_of_file = True
                     elif offset == 7:
@@ -329,8 +401,10 @@ class ZomboidImport(Operator, ImportHelper):
                     
             # Close the file.
             file.close()
-
-        self.create_armature()
+        
+        if self.has_armature:
+            self.create_armature()
+        
         self.create_mesh()
         
         bpy.context.scene.cursor_location = old_cursor
@@ -343,9 +417,10 @@ class ZomboidImport(Operator, ImportHelper):
         self.bone_matrix_inverse_bind_pose_data = dict()
         self.bone_matrix_offset_data            = dict()
         self.bone_map                           = dict()
-        self.BlendWeightArray                   = dict()
-        self.BlendIndexArray                    = dict()
+        self.bone_ids                           = dict()
         
+        self.BlendWeightArray                   = []
+        self.BlendIndexArray                    = []
         self.empties                            = []
         self.bone_names                         = []
         self.bone_parent                        = []
@@ -376,6 +451,7 @@ class ZomboidImport(Operator, ImportHelper):
         self.TextureCoordArray                  = 0
         
         self.hasTex                             = False
+        self.has_armature                       = False
         
 # Only needed if you want to add into a dynamic menu
 def menu_func_import(self, context):
