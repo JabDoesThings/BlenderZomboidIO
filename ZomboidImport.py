@@ -1,4 +1,5 @@
-import bpy,io,bmesh
+import io,math,bmesh,bpy
+
 from bpy import context
 from bpy.types import Operator
 from bpy.props import FloatVectorProperty
@@ -10,7 +11,6 @@ from mathutils import Euler
 from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
-import math
 
 class ZomboidImport(Operator, ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
@@ -51,6 +51,8 @@ class ZomboidImport(Operator, ImportHelper):
             
             if type == "TextureCoordArray":
                 self.hasTex = True
+            elif type == "BlendWeightArray":
+                self.has_vert_bone_data = True
             
             # Place it in the dictionary
             self.vertexStrideData[type] = value
@@ -320,7 +322,7 @@ class ZomboidImport(Operator, ImportHelper):
                 vertex_group.name = bone.name
                 
                 # Get the original index of the Armature.
-                bone_import_index = self.bone_ids[bone.name]
+                bone_import_index = int(obj_armature[bone.name])
                 
                 # Offset of the vertex to know which Vert we are dealing with.
                 offset_vert = 0
@@ -435,6 +437,15 @@ class ZomboidImport(Operator, ImportHelper):
         self.optimize_armature()
         
         bpy.ops.object.mode_set(mode='OBJECT')
+        
+        obj_armature["ZOMBOID_ARMATURE"] = 1
+        
+        for x in range(0, self.numberBones):
+            id   = x
+            name = self.bone_names[id]
+            bpy.ops.wm.properties_add(data_path="object.data")
+            obj_armature[name] = id
+            
     
     def optimize_armature(self):
         for x in range(1, self.numberBones):
@@ -745,8 +756,31 @@ class ZomboidImport(Operator, ImportHelper):
             # WIP for now.
             #self.create_animations()
         
-        
-        
+        # Check for meshes with Blend data and no armature.
+        if self.has_armature == False and self.has_vert_bone_data == True:
+            
+            valid_arm     = False
+            armature_name = ''
+            
+            for armature in bpy.data.objects:
+                try:
+                    test = armature["ZOMBOID_ARMATURE"]
+                    if test != -1:
+                        armature_name = armature.name
+                        self.armature = armature.data
+                        self.amtname  = armature.name
+                        self.has_armature = True
+                        break
+                except:
+                    ok = True
+            
+            if valid_arm:
+                obj_armature = bpy.data.objects[armature_name]
+                for bone in obj_armature.data.bones:
+                    bone_name = bone.name
+                    id = self.bone_ids[bone_name] = obj_armature[bone_name]
+                    self.bone_names[id] = bone_name
+                    
         self.create_mesh()
         
         bpy.context.scene.cursor_location = old_cursor
@@ -798,6 +832,7 @@ class ZomboidImport(Operator, ImportHelper):
         self.hasTex                             = False
         self.has_armature                       = False
         self.has_animations                     = False
+        self.has_vert_bone_data                 = False
 
 
 
