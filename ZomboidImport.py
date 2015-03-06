@@ -4,10 +4,7 @@ from bpy import context
 from bpy.types import Operator
 from bpy.props import FloatVectorProperty
 from bpy_extras.object_utils import AddObjectHelper, object_data_add
-from mathutils import Vector
-from mathutils import Matrix
-from mathutils import Quaternion
-from mathutils import Euler
+from mathutils import Vector, Euler, Quaternion, Matrix
 from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
@@ -198,7 +195,7 @@ class ZomboidImport(Operator, ImportHelper):
             self.animations.append(animation)
             
             for keyframe_index in range(0, animation_frame_count):
-                
+                 
                 current_index     = read_int(file)
                     
                 # If this is true, one true frame loop occured.
