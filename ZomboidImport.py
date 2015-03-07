@@ -1,3 +1,7 @@
+# Author: Jab (or 40BlocksUnder) | Joshua Edwards
+# Link for more info: http://theindiestone.com/forums/index.php/topic/12864-blender
+# Imports models from Zomboid format.
+
 import io,math,bmesh,bpy
 
 from bpy import context
@@ -13,8 +17,13 @@ class ZomboidImport(Operator, ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
     
     # important since its how bpy.ops.import_test.some_data is constructed
-    bl_idname = "zomboid.import_model"
-    bl_label = "Import a Zomboid Model"
+    bl_idname    = "zomboid.import_model"
+    bl_label     = "Import a Zomboid Model"
+    filename_ext = ".txt"
+    filter_glob  = StringProperty(
+            default="*.txt",
+            options={'HIDDEN'},
+            )
     
     # Get the current scene
     scene = context.scene

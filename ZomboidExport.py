@@ -1,3 +1,7 @@
+# Author: Jab (or 40BlocksUnder) | Joshua Edwards
+# Link for more info: http://theindiestone.com/forums/index.php/topic/12864-blender
+# Exports models to Zomboid format.
+
 import io, math, bmesh, bpy
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
@@ -6,28 +10,27 @@ from mathutils import Vector, Euler, Quaternion, Matrix
 
 
 class ZomboidExport(Operator, ExportHelper):
-    bl_idname = "zomboid.export_model"
-    bl_label = "Export a Zomboid Model"
+    bl_idname    = "zomboid.export_model"
+    bl_label     = "Export a Zomboid Model"
     filename_ext = ".txt"
-
-    filter_glob = StringProperty(
+    filter_glob  = StringProperty(
             default="*.txt",
             options={'HIDDEN'},
             )
 
-    use_setting = BoolProperty(
-            name="Example Boolean",
-            description="Example Tooltip",
-            default=True,
-            )
+    #use_setting = BoolProperty(
+    #        name="Example Boolean",
+    #        description="Example Tooltip",
+    #        default=True,
+    #        )
 
-    type = EnumProperty(
-            name="Example Enum",
-            description="Choose between two items",
-            items=(('OPT_A', "First Option", "Description one"),
-                   ('OPT_B', "Second Option", "Description two")),
-            default='OPT_A',
-            )
+    #type = EnumProperty(
+    #        name="Example Enum",
+    #        description="Choose between two items",
+    #        items=(('OPT_A', "First Option", "Description one"),
+    #               ('OPT_B', "Second Option", "Description two")),
+    #        default='OPT_A',
+    #        )
     
     
     def prepare_mesh(self):
@@ -72,6 +75,16 @@ class ZomboidExport(Operator, ExportHelper):
         
         self.mesh_loops = mesh.loops
         
+        for modifier in object.modifiers:
+            if modifier.type == 'ARMATURE':
+                if object.parent.type == 'ARMATURE':
+                    if object.parent['ZOMBOID_ARMATURE'] == 1:
+                        self.vertex_stride_element_count += 2
+                        self.armature = object.parent.data
+                        self.mesh_has_bone_weights = True
+                        print("Armature modifier detected. Exporting with bone weights.")
+            
+        
         
         
     def process_mesh(self):
@@ -83,30 +96,29 @@ class ZomboidExport(Operator, ExportHelper):
         mesh        = self.mesh
         mesh_matrix = self.mesh_matrix
 
+        if self.mesh_has_bone_weights:
+            vert_weight_id    = []
+            vert_weight_value = []
+            
+            bone_id_table     = get_bone_id_table(object.parent)
+            weight_data       = mesh_to_weight_list(object, mesh)
+            weight_bone_names = weight_data[0]
+            weight_vert_data  = weight_data[1]
+            
+            for vid, vert in enumerate(mesh.vertices):
+                weights = ""
+                indexes = ""
+                for bid, bone_value in enumerate(weight_vert_data[vid]):
+                    if bone_value > 0.0:
+                       bone_id = bone_id_table[weight_bone_names[bid]]
+                       weights += str(round(bone_value, 8)) + ", "
+                       indexes += str(bone_id) + ", "
+                
+                vert_weight_id.append(indexes[:-2])
+                vert_weight_value.append(weights[:-2])
+                
+                
         mesh.update(calc_tessface=True)
-        
-        #for v in range(0, len(mesh.vertices)):
-        #    vert = mesh.vertices[v]
-        #    self.verts[v] = Vertex()
-        #    self.verts[v].id = v
-        #    self.verts[v].co = vert.co
-        #    self.verts[v].normal = vert.normal
-        
-        #for tess in mesh.tessfaces:
-        #    face = Face()
-        #    face.id = tess.index
-        #    offset = 0
-        #    for v in tess.vertices:
-        #        
-        #        vert = mesh.vertices[v]
-        #        
-        #        face.verts.append(v)
-        #    
-        #        offset += 1
-        #    
-        #    self.faces.append(face)
-        
-        #bpy.ops.object.mode_set(mode = 'EDIT')
         
         for f in mesh.polygons:
             face = Face()
@@ -115,64 +127,90 @@ class ZomboidExport(Operator, ExportHelper):
                 l = mesh.loops[i]
                 v = mesh.vertices[l.vertex_index]
                 vert = Vertex()
-                vert.id = l.vertex_index
+                vid = vert.id = l.vertex_index
                 vert.co = v.co
                 vert.normal = v.normal
                 
-                uvl = 0
-                for j,ul in enumerate(mesh.uv_layers):
-                    
-                    if uvl > 0:
-                        print("UV Layer: " + str(uvl))
-                    #print("\t\tUV Map", j, "has coordinates", ul.data[l.index].uv, \
-                    #    "for this loop index")
-                    vert.texture_coord = ul.data[l.index].uv
-                    
-                    uvl += 1
+                # If UV mapping, then add this data.
+                if self.mesh_has_uv_mapping:
+                    uvl = 0
+                    for j,ul in enumerate(mesh.uv_layers):
+                        vert.texture_coord = ul.data[l.index].uv
+                        uvl += 1
+                
+                # If Bone Weights, add this data.
+                if self.mesh_has_bone_weights:
+                    vert.blend_weight = vert_weight_value[vid]
+                    vert.blend_index  = vert_weight_id[vid]
+                
                 face.verts.append(vert)
+                
             self.faces.append(face)
         
+        # Optimize the face vert count
+        
+        # Temporary containers & flags
         verts      = []
         has_vert   = dict()
         vert_index = dict()
         
+        # Offset for the new index
         vert_offset = 0
+        
+        # Go through each face
         for f in self.faces:
+            # Go through each vertex
             for index in range(0,len(face.verts)):
-                print(index)
+                # Grab the vertex
                 f_v = f.verts[index]
+                
+                # Create the Unique key for compared data.
                 key = str(f_v.co) + " " + str(f_v.texture_coord)
-                print(key)
                 try:
+                    # Ask if vert key exists.
                     has_v = has_vert[key]
+                    # If so,
                     if has_v:
+                        # Point the face's vert index there instead.
                         f.vert_ids.append(vert_index[key])
+                    # Add a false clause just in-case.
                     else:
+                        # Set the key flag to True.
                         has_vert[key]   = True
-                        f.verts[index]  = f_v
+                        # Set the vert's ID to the new one.
                         f_v.id          = vert_offset
+                        # Set the index container.
                         vert_index[key] = vert_offset
+                        # Append the vertex's new ID to the face.
                         f.vert_ids.append(vert_offset)
+                        # Add the vertex to the new array.
                         verts.append(f_v)
+                        #Increment the offset for the next new Vertex.
                         vert_offset    += 1
-                        
+                # This happens when not valid. Create new vertex.        
                 except:
+                    # Set the key flag to True.
                     has_vert[key]   = True
-                    f.verts[index]  = f_v
+                    # Set the vert's ID to the new one.
                     f_v.id          = vert_offset
+                    # Set the index container.
                     vert_index[key] = vert_offset
+                    # Append the vertex's new ID to the face.
                     f.vert_ids.append(vert_offset)
+                    # Add the vertex to the new array.
                     verts.append(f_v)
+                    #Increment the offset for the next new Vertex.
                     vert_offset    += 1
             
-            #del f.verts
+            # Delete unused data.
+            del f.verts
         
-        #del has_vert
-        #del vert_index
+        # Delete unused data.
+        del has_vert
+        del vert_index
         
         self.verts = verts
         
-        #bpy.ops.object.mode_set(mode = 'OBJECT')
                     
     def write_header(self, file):
         write_comment(file, "Project Zomboid Skinned Mesh")
@@ -238,8 +276,8 @@ class ZomboidExport(Operator, ExportHelper):
                 write_vector_3(file, vert.tangent)
             if self.mesh_has_uv_mapping:
                 write_uv(file, vert.texture_coord)
-            #if self.mesh_has_bone_weights:
-                
+            if self.mesh_has_bone_weights:
+                write_weights(file, vert)    
         
     def write_faces(self, file):
         
@@ -298,6 +336,7 @@ class ZomboidExport(Operator, ExportHelper):
         
         self.object_original                    = None
         self.object                             = None
+        self.armature                           = None
         self.mesh                               = None
         self.mesh_name                          = "Untitled_Mesh"
         self.mesh_matrix                        = None
@@ -342,6 +381,7 @@ class Vertex:
         self.blend_index                        = []
         
         self.id                                 = -1
+        self.original_vert_id                   = -1
     
     
 class Face:
@@ -393,6 +433,7 @@ def write_line(file, line, new_line=True):
 def write(file, line):
     write_line(file, line, new_line=False)
     
+    
 # Writes a comment to the file.
 def write_comment(file, comment):
     
@@ -408,8 +449,13 @@ def write_vector_3(file, vector):
 
 def write_uv(file, vector):
     #print("Vec2: " + str(vector))
-    string = str(vector[0]) + ", " + str(1.0 - vector[1])
+    string = str(round(vector[0], 8)) + ", " + str(round(1.0 - vector[1], 8))
     write_line(file, string)
+    
+    
+def write_weights(file, vector):
+    write_line(file, vector.blend_weight)
+    write_line(file, vector.blend_index)   
     
     
 def write_array(file, array):
@@ -419,6 +465,7 @@ def write_array(file, array):
         string += str(element) + ", "
     
     write_line(file, string[:-2])
+   
     
 def write_face(file, face):
     string = ""
@@ -429,6 +476,54 @@ def write_face(file, face):
     
 #####################################################################################
 ###                                                                               ###
-###   Math Methods                                                                ###
+###   Helper Methods                                                              ###
 ###                                                                               ###
 ##################################################################################### 
+
+
+def mesh_to_weight_list(ob, me):
+    """
+    Takes a mesh and return its group names and a list of lists,
+    one list per vertex.
+    aligning the each vert list with the group names,
+    each list contains float value for the weight.
+    link: http://blender.stackexchange.com/a/653
+    def author: ideasman42
+    """
+    
+    # clear the vert group.
+    group_names = [g.name for g in ob.vertex_groups]
+    group_names_tot = len(group_names)
+
+    if not group_names_tot:
+        # no verts? return a vert aligned empty list
+        return [[] for i in range(len(me.vertices))], []
+    else:
+        weight_ls = [[0.0] * group_names_tot for i in range(len(me.vertices))]
+
+    for i, v in enumerate(me.vertices):
+        for g in v.groups:
+            # possible weights are out of range
+            index = g.group
+            if index < group_names_tot:
+                weight_ls[i][index] = g.weight
+
+    return group_names, weight_ls
+
+
+def get_bone_id_table(armature):
+    
+    arm = armature.data
+    
+    bone_names = [bone.name for bone in arm.bones]
+    bone_ids   = dict()
+    
+    
+    for bone_name in bone_names:
+        try:
+            bone_ids[bone_name] = int(armature[bone_name])
+            print(bone_ids[bone_name])
+        except:
+            continue
+    
+    return bone_ids
