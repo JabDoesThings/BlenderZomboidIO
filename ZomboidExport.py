@@ -79,9 +79,10 @@ class ZomboidExport(Operator, ExportHelper):
             if modifier.type == 'ARMATURE':
                 if object.parent.type == 'ARMATURE':
                     if object.parent['ZOMBOID_ARMATURE'] == 1:
-                        self.vertex_stride_element_count += 2
+                        self.vertex_stride_element_count += 3
                         self.armature = object.parent.data
-                        self.mesh_has_bone_weights = True
+                        self.mesh_has_bone_weights  = True
+                        self.mesh_has_tangent_array = True
                         print("Armature modifier detected. Exporting with bone weights.")
             
         
@@ -108,12 +109,20 @@ class ZomboidExport(Operator, ExportHelper):
             for vid, vert in enumerate(mesh.vertices):
                 weights = ""
                 indexes = ""
+                offset = 0
                 for bid, bone_value in enumerate(weight_vert_data[vid]):
                     if bone_value > 0.0:
-                       bone_id = bone_id_table[weight_bone_names[bid]]
+                       bone_id  = bone_id_table[weight_bone_names[bid]]
                        weights += str(round(bone_value, 8)) + ", "
                        indexes += str(bone_id) + ", "
+                       offset  += 1
                 
+                if offset < 4:
+                    while offset < 4:
+                        weights += "-1.0, "
+                        indexes += "0, "
+                        offset  += 1
+                        
                 vert_weight_id.append(indexes[:-2])
                 vert_weight_value.append(weights[:-2])
                 
