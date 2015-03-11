@@ -25,6 +25,43 @@ class ZomboidImport(Operator, ImportHelper):
             options={'HIDDEN'},
             )
     
+    load_model = BoolProperty(
+        name="Load Model",
+        description="Whether or not to import the model mesh.",
+        default=True,
+        )
+    
+    load_armature = BoolProperty(
+        name="Load Armature",
+        description="Whether or not to import the armature, if present.",
+        default=True,
+        )
+    
+    load_model_weights = BoolProperty(
+        name="Load Bone Weights",
+        description="Load Bone weights if PZ armature is detected. (RECOMENDED!)",
+        default=True,
+        )
+    
+    load_animations = BoolProperty(
+        name="Load Animations (WIP!)",
+        description="Whether or not to import animations. (Not done yet!)",
+        default=False,
+        )
+    
+    lock_model_on_armature_detection = BoolProperty(
+        name="Lock Model Transforms If Armature Present",
+        description="Whether or not to lock the model, if an armature is present.",
+        default=True,
+        )
+        
+    should_optimize_armature = BoolProperty(
+        name="Optimize Armature (Biped Models)",
+        description="Optimizes the imported Armature for animation purposes.",
+        default=True,
+        )
+    
+
     # Get the current scene
     scene = context.scene
 
@@ -302,8 +339,9 @@ class ZomboidImport(Operator, ImportHelper):
         
         if self.has_armature:
             
-            # Lock the mesh so the armature has complete control.
-            obj.lock_location = obj.lock_rotation = obj.lock_scale = [True, True, True]
+            if self.lock_model_on_armature_detection:
+                # Lock the mesh so the armature has complete control.
+                obj.lock_location = obj.lock_rotation = obj.lock_scale = [True, True, True]
             # Grab the Object-representation of the armature.
             obj_armature      = bpy.data.objects[self.amtname]
             
@@ -440,7 +478,8 @@ class ZomboidImport(Operator, ImportHelper):
             bone.parent = parent_bone
         
         # TODO: Add a option to not load animations and optimize the armature for personal animation use.    
-        self.optimize_armature()
+        if self.should_optimize_armature:
+            self.optimize_armature()
         
         bpy.ops.object.mode_set(mode='OBJECT')
         
@@ -458,8 +497,6 @@ class ZomboidImport(Operator, ImportHelper):
           
             bone_name = self.bone_names[x]
             
-            print("1st phase: " + bone_name)
-            
             bone = self.armature.edit_bones[bone_name]
             bone_tail = bone.tail
           
@@ -469,7 +506,6 @@ class ZomboidImport(Operator, ImportHelper):
                         bone.tail = bone.children[2].head
                         continue
                     if "Bip01" == bone_name:
-                        print("Bip01 exists")
                         bone.tail = bone.children[0].head
 
                 if bone.children != None:
@@ -499,7 +535,6 @@ class ZomboidImport(Operator, ImportHelper):
         for x in range(1, self.numberBones):
           
             bone_name = self.bone_names[x]
-            print("2nd phase: " + bone_name)  
             bone = self.armature.edit_bones[bone_name]
             
             #if "Pelvis" in bone.name:
@@ -513,7 +548,6 @@ class ZomboidImport(Operator, ImportHelper):
             
         for x in range(0, self.numberBones):
             bone_name = self.bone_names[x]
-            print("3rd phase: " + bone_name)
             bone = self.armature.edit_bones[bone_name]
             
             if bone.tail == bone.head:
@@ -740,11 +774,14 @@ class ZomboidImport(Operator, ImportHelper):
                     elif offset == 10:
                         self.read_bone_offset_data(file)
                     elif offset == 11:
-                        try:
-                            self.animation_count = read_int(file)
-                            self.has_animations  = True
-                        except:
+                        if not self.load_animations:
                             end_of_file          = True
+                        else:
+                            try:
+                                self.animation_count = read_int(file)
+                                self.has_animations  = True
+                            except:
+                                end_of_file          = True
                     elif offset == 12:
                         self.read_animations(file)
                     offset+=1
@@ -754,7 +791,7 @@ class ZomboidImport(Operator, ImportHelper):
             # Close the file.
             file.close()
         
-        if self.has_armature:
+        if self.has_armature and self.load_armature:
             # Create the Armature for proceeding animation data
             self.create_armature()
         
@@ -763,7 +800,7 @@ class ZomboidImport(Operator, ImportHelper):
             #self.create_animations()
         
         # Check for meshes with Blend data and no armature.
-        if self.has_armature == False and self.has_vert_bone_data == True:
+        if self.has_armature == False and self.has_vert_bone_data == True and self.load_model_weights:
             
             valid_arm     = False
             armature_name = ''
@@ -787,7 +824,8 @@ class ZomboidImport(Operator, ImportHelper):
                     id = self.bone_ids[bone_name] = obj_armature[bone_name]
                     self.bone_names[id] = bone_name
                     
-        self.create_mesh()
+        if self.load_model:
+            self.create_mesh()
         
         bpy.context.scene.cursor_location = old_cursor
         
@@ -835,6 +873,8 @@ class ZomboidImport(Operator, ImportHelper):
         self.TextureCoordArray                  = 0
         self.animation_count                    = 0
         
+        
+        #self.load_armature                      = True
         self.hasTex                             = False
         self.has_armature                       = False
         self.has_animations                     = False
