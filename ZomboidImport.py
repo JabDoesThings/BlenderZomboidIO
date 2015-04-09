@@ -12,6 +12,7 @@ from mathutils import Vector, Euler, Quaternion, Matrix
 from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
+from math import pi
 
 class ZomboidImport(Operator, ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
@@ -58,7 +59,7 @@ class ZomboidImport(Operator, ImportHelper):
     should_optimize_armature = BoolProperty(
         name="Optimize Armature (Biped Models)",
         description="Optimizes the imported Armature for animation purposes.",
-        default=True,
+        default=False,
         )
     
 
@@ -113,7 +114,7 @@ class ZomboidImport(Operator, ImportHelper):
                     line = read_line(file)
                     vs = line.split(', ')
 
-                    self.verts.append(Vector((float(vs[0]), float(vs[1]), float(vs[2]))))
+                    self.verts.append(Vector((float(vs[0]), float(vs[1]), float(vs[2]))) * matrix_3_transform_y_positive)
 
                 elif self.vertexStrideType[element] == "TextureCoordArray":
                     line = read_line(file)
@@ -210,7 +211,7 @@ class ZomboidImport(Operator, ImportHelper):
             boneIndex          = read_int(file)
             bone_offset_matrix = read_matrix(file)
             
-            self.bone_matrix_offset_data[index] = bone_offset_matrix
+            self.bone_matrix_offset_data[index] = bone_offset_matrix.transposed().copy() * matrix_4_transform_y_positive
     
     
     # Animations:
@@ -224,6 +225,8 @@ class ZomboidImport(Operator, ImportHelper):
     # -- Frame (Quaternion) Rotation
     def read_animations(self,file):
         
+        bone_count = len(self.bone_names)
+        
         for animation_index in range(0,self.animation_count):
             animation_name        = read_line(file)
             animation_time        = read_float(file)
@@ -232,7 +235,7 @@ class ZomboidImport(Operator, ImportHelper):
             print("Reading Animation: " + animation_name + "...")
             
             key_frames            = []
-            frame                 = Frame()
+            frame                 = Frame(bone_count, self)
             current_index         = -1
             last_index            = -1
             first                 = False
@@ -247,27 +250,33 @@ class ZomboidImport(Operator, ImportHelper):
                 # If this is true, one true frame loop occured.
                 if current_index < last_index:
                     
-                    for kf in key_frames:
+                    
+                    for index, kf in enumerate(key_frames):
                         frame.bones.append(kf.bone_index)
                         frame.bone_names.append(kf.bone_name)
                         frame.times.append(kf.time)
-                        frame.bone_mats.append(kf.matrix)
-                        frame.bone_locs.append(kf.loc)
-                        frame.bone_rots.append(kf.rot)
+                        
+                        # frame.bone_mats[kf.bone_name] = kf.matrix
+                        frame.bone_locs[kf.bone_name] = kf.loc
+                        frame.bone_rots[kf.bone_name] = kf.rot
+                    
+                    frame.key_frames = key_frames
+                    frame.calculate(self)
+                    
                     
                     # Add the frame to the animation.
                     animation.frames.append(frame)
                     
                     # Create a new frame to work with before continuing.
                     key_frames = []
-                    frame = Frame()
+                    frame = Frame(bone_count, self)
                     
                 last_index = current_index
                     
                 bone_name  = read_line(file)
                 frame_time = read_float(file)
-                loc        = read_vector(file)
-                rot        = read_quaternion(file)#.inverted().copy()
+                loc        = read_vector(file)     * matrix_3_transform_y_positive
+                rot        = read_quaternion(file) 
                 mat        = matrix_from_quaternion_position(rot,loc)
                 
                 # Create a new key frame.
@@ -277,15 +286,20 @@ class ZomboidImport(Operator, ImportHelper):
                 
                 # Add the KeyFrame to the array to package later.
                 key_frames.append(key_frame)
+                
             
             for kf in key_frames:
                 frame.bones.append(kf.bone_index)
                 frame.bone_names.append(kf.bone_name)
                 frame.times.append(kf.time)
-                frame.bone_mats.append(kf.matrix)
-                frame.bone_locs.append(kf.loc)
-                frame.bone_rots.append(kf.rot)
+                
+                # frame.bone_mats[kf.bone_name] = kf.matrix
+                frame.bone_locs[kf.bone_name] = kf.loc
+                frame.bone_rots[kf.bone_name] = kf.rot
 
+            frame.key_frames = key_frames
+            frame.calculate(self)
+            
             # Add the frame to the animation.
             animation.frames.append(frame)
 
@@ -429,14 +443,17 @@ class ZomboidImport(Operator, ImportHelper):
         # Create the Root transformation manually to set up parent inheritance.  #
         bone            = self.armature.edit_bones.new(self.bone_names[0])       #
         matrix_location = self.bone_matrix_offset_data[0]                        #
-        mat             = set_identity()                                         #
+        mat             = Matrix.Identity(4)                                     #
         mat_world       = matrix_location * mat                                  #
                                                                                  #
         self.world_transforms.append(mat_world)                                  #
         self.bones.append(bone)                                                  #
+        
                                                                                  #
+        self.bone_location.append(mat_world.decompose()[0])
+                                                                                 
         bone.matrix = mat_world                                                  #
-        bone.tail   = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))  #
+        bone.tail   = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075)) #
         ##########################################################################
         
         # Set up each bone.
@@ -447,8 +464,8 @@ class ZomboidImport(Operator, ImportHelper):
             print("Creating Bone: " + bone.name + "...")
             
             if bone.name == "Bip01":
-                bone.head = Vector((0,0.05,0))
-                bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
+                bone.head = Vector((0,0.075,0))
+                bone.tail = Vector((bone.head[0], bone.head[1] + 0.075, bone.head[2]))
                 
             self.bones.append(bone)
             
@@ -460,19 +477,23 @@ class ZomboidImport(Operator, ImportHelper):
             mat_world       = matrix_location * self.bone_matrix_offset_data[parent_index].copy().inverted()
             mat             = matrix_location.inverted().copy()
             self.world_transforms.append(mat_world)
-
+            self.bone_location.append(mat.decompose()[0])
+            
+            
             #####################################################################################
             #-----------------------------------------------------------------------------------#
             # TODO: Could improve this by using the bind-pose rotation to create the rest pose. #
             #       Might have to do this later.                                                #
+            print("Quaternion: " + str(matrix_rotation.decompose()[1]))
+            
             bone.head = mat.decompose()[0]                                                      #
-            bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))               #
+            bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))               #
                                                                                                 #
             if parent_index != -1:                                                              #
                 if bone.tail[0] == 0 and bone.tail[1] == 0 and bone.tail[2] == 0:               #
-                    bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))       #
+                    bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))       #
             else:                                                                               #
-                bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))           #
+                bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))           #
             #####################################################################################
             
             bone.parent = parent_bone
@@ -505,8 +526,9 @@ class ZomboidImport(Operator, ImportHelper):
                     if "Neck" in bone_name:
                         bone.tail = bone.children[2].head
                         continue
-                    if "Bip01" == bone_name:
-                        bone.tail = bone.children[0].head
+                    #if "Bip01" == bone_name:
+                        #bone.tail = bone.children[0].head
+                        
 
                 if bone.children != None:
                     if bone.children[0] != None:
@@ -515,7 +537,7 @@ class ZomboidImport(Operator, ImportHelper):
                 bone.tail = bone_tail
             
             if bone.tail[0] == 0 and bone.tail[1] == 0 and bone.tail[2] == 0:      
-                bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
+                bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))
             
             if "Nub" in bone.name:
                 if bone.parent != None:
@@ -523,10 +545,10 @@ class ZomboidImport(Operator, ImportHelper):
                 else:
                     bone.head = self.bone_matrix_offset_data[x].inverted().copy().decompose()[0]
                 
-                bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
+                bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))
             
             if "Foot" in bone.name:
-                bone.tail = Vector((bone.head[0], bone.head[1] - 0.05, bone.head[2]))
+                bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] - 0.075))
                 
             if bone.parent != None:
                 if bone.parent.tail == bone.head:
@@ -552,7 +574,7 @@ class ZomboidImport(Operator, ImportHelper):
             
             if bone.tail == bone.head:
                 print(bone.name)
-                bone.tail = Vector((bone.head[0], bone.head[1] + 0.05, bone.head[2]))
+                bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))
         
         bpy.ops.armature.select_all(action='SELECT')
         bpy.ops.armature.calculate_roll(type='GLOBAL_Z')
@@ -560,9 +582,15 @@ class ZomboidImport(Operator, ImportHelper):
         bpy.ops.armature.select_all(action='DESELECT')
     
     
+    def apply_pose(self):
+        ok = None
+        
+    
     # WIP METHOD!!! This method will almost surely change, as this is the "I don't know what the hell I'm
     #     supposed to be doing" phase. 
     def create_animations(self):
+        
+        self.armature.show_axes = True
         
         # Set ourselves into the pose mode of the armature with nothing selected.
         bpy.ops.object.select_all(action='DESELECT')
@@ -570,21 +598,13 @@ class ZomboidImport(Operator, ImportHelper):
         bpy.ops.object.mode_set(mode='POSE')
         bpy.ops.pose.select_all(action='DESELECT')
         
-        euler_rotation_offset = Euler()        
-        euler_rotation_offset.x = 0
-        euler_rotation_offset.y = 0
-        euler_rotation_offset.z = 0
-        
         frame_offset = 0
         
-        world_transforms = dict()
-        bone_transforms  = dict()
-        skin_transforms  = dict()
         
         # Go through each Animation.
         for animation in self.animations:
             
-            if animation.name != "Idle":
+            if animation.name != "Run":
                 continue
             
             # Create a new Action for the Animation.
@@ -592,26 +612,47 @@ class ZomboidImport(Operator, ImportHelper):
             
             print("Rendering Animation: " + animation.name + "...")
             
-            # Offset counter for each frame.
-            #frame_offset = 0
-            
-            loc_parent_dic = dict() 
-            rot_parent_dic = dict()
-            mat_parent_dic = dict()
-            
-            identity = set_identity()
-            vec3     = Vector((0.0,1.0,0.0))
-            identity = rotate(0.0,vec3,identity)
-            
-            bone_transforms[0]  = self.bones[self.bone_ids["Root"]].matrix
-            world_transforms[0] = self.mul(bone_transforms[0], identity)
-            skin_transforms[0]  = self.mul(self.bone_matrix_offset_data[0], world_transforms[0])
-            
             frame_offset = 0
             
+            bone_animation_count = dict()
+            
+            for frame_index, frame in enumerate(animation.frames):
+                for bone_name in frame.bone_names:
+                    if frame_index == 0:
+                        bone_animation_count[bone_name] = 0
+                    else:
+                        bone_animation_count[bone_name] += 1
+                    
             # Loop through each frame.
             for frame in animation.frames:
                 
+                bone_parent_rot = dict()
+                bone_transform = dict()
+
+                #bone_transform['Root'] = frame.bone_rots['Root']
+                
+                for bone_name in self.bone_names:
+                    bone_transform[bone_name] = Quaternion((1.0, 0.0, 0.0, 0.0))
+                
+                for bone_name in frame.bone_names:
+                    if bone_animation_count[bone_name] == 0:
+                        continue
+
+                    if bone_name == 'Root':# or bone.parent.name == 'Root':
+                        continue
+                    
+                    par = self.bone_names[self.bone_parent[self.bone_ids[bone_name]]]                    
+                    print("par:" + str(par))
+                    
+                   
+                    
+                    try:
+                        bone_transform[bone_name] = frame.bone_rots[bone_name].copy() * bone_transform[par].copy()
+                    except:
+                        ok = True
+                
+                p_bones = []
+                #print("\n\nFrame: " + str(frame_offset))                
                 # Bone offset to track which in the frame arrays is being accessed.
                 bone_offset = 0 
                 
@@ -619,114 +660,134 @@ class ZomboidImport(Operator, ImportHelper):
                 bpy.data.scenes[0].frame_current = frame_offset
                 
                 for bone_name in frame.bone_names:
-                    
-                    if "Root" in bone_name:
-                        bone_offset += 1
-                        continue
-                    
+
                     # Grab the bone responsible for this action
                     bone = bpy.data.objects[self.amtname].pose.bones[bone_name]
 
+                    if bone_animation_count[bone_name] == 0:
+                        continue
+
+                    if bone_name == 'Root':
+                        continue
+
+                    # Store it in the array to bind keyframe.
+                    p_bones.append(bone)
+                    
+                    bone.rotation_mode == 'QUATERNION'
+                    
                     bone_id   = self.bone_ids[bone.name]
                     parent_id = self.bone_parent[bone_id]
 
-                    ebone          = self.bones[bone_id]
-                    ebone_matrix   = self.bone_matrix_offset_data[bone_id]
-                    ebone_location = ebone_matrix.decompose()[0]
-                    ebone_rotation = ebone_matrix.decompose()[1]
+                    k_loc = frame.bone_locs[bone_name]
+                    k_rot = frame.bone_rots[bone_name]
+                    #k_rot = bone_transform[bone_name]
+                    
+                    bind_matrix   = self.bone_matrix_bind_pose_data[self.bone_ids[bone_name]].copy()
+                    bind_matrix.transpose()
+                    bind_rotation = bind_matrix.decompose()[1]
+                    #bind_rotation = bone_transform[bone_name]
+                    
+                    
+                    #k_matrix = k_rot.to_matrix().copy().to_4x4().copy()
+#                    k_matrix = Matrix((
+#                    [        1,        0,        0, k_rot[1]],
+#                    [        0,        1,        0, k_rot[2]],
+#                    [        0,        0,        1, k_rot[3]],
+#                    [ k_rot[1], k_rot[2], k_rot[3], k_rot[0]]))
+#                    
+#                   
+#                    k_matrix = k_matrix.copy().transposed() * matrix_4_transform_y_positive
+#                    print(k_matrix)
+                    #k_rot2 = k_matrix.copy().decompose()[1]
 
-
-                    # Create default Parent transform rotation and location                    
-                    loc_parent = Vector((0,0,0))
-                    rot_parent = Quaternion()
-                    mat_parent = self.set_identity()
+                    quat_b = Quaternion((0.0, 0.0, 1.0), math.radians(90.0))
+                    #rotation = bind_rotation.rotation_difference(k_rot.copy().inverted())
+                    #rotation = k_rot #* bind_rotation 
                     
-                    # If the bone indeed has a parent, replace the defaults with parent.
-                    #if self.bone_parent[self.bone_ids[bone.name]] != -1:
-                        #print(self.bone_names[self.bone_parent[self.bone_ids[bone.name]]])
-                        #loc_parent = loc_parent_dic[self.bone_names[self.bone_parent[self.bone_ids[bone.name]]]]
-                        #rot_parent = rot_parent_dic[self.bone_names[self.bone_parent[self.bone_ids[bone.name]]]]
-                        # mat_parent = mat_parent_dic[self.bone_names[self.bone_parent[self.bone_ids[bone.name]]]]
+                    rotation = bone_transform[bone_name]
                     
-                    # Grab the raw quaternion and location vector read from the file.
-                    loc = frame.bone_locs[bone_offset]
-                    rot = frame.bone_rots[bone_offset]
-                    mat = frame.bone_mats[bone_offset]
-                    
-                    self.bone_matrix_bind_pose_data[bone_id]
-                    
-                    # Bone_transform
-                    bt = bone_transforms[bone_id]  = matrix_from_quaternion_position(rot, loc)
-                    # World_transform
-                    wt = world_transforms[bone_id] = mul(bt,world_transforms[parent_id])
-                    # Skin_transform
-                    st = skin_transforms[bone_id]  = mul(self.bone_matrix_offset_data[bone_id], wt)
-                    
-                    print(bone_name + "'s: \t\n" + str(bt))
-                    
-                    #bone.location            = wt.transposed().decompose()[0]
-                    #bone.rotation_quaternion = wt.transposed().decompose()[1]
-                    
-                    #bone.matrix_basis = st.transposed().copy()
-                    
-                    #bone.matrix = wt * bt #.transposed()
-                    #bone.matrix_basis = wt.transposed()
-                    
-                    #bt.transpose()
-                    #bt.transpose()
-                    
-                    q = Quaternion()
-                    #q = st.decompose()[1]
-                    
-                    #q.w = st[3][3]
-                    #q.z = st[2][3]
-                    #q.y = st[1][3]
-                    #q.x = st[0][3]
-                    
-                    q.x = st[3][0]
-                    q.y = st[3][1]
-                    q.z = st[3][2]
-                    q.w = st[3][3]
-                    
-                    #bt.invert()
-                    bone.rotation_quaternion = q
-                    
-                    #bone.location = Vector((bt[0][3], bt[1][3], bt[2][3]))
-                    
-                    #bone.matrix = self.translate(ebone_location,src=bone.matrix)
-                    #bone.location = Vector((bone.location[0] + ebone_location[0], bone.location[1] + ebone_location[1], bone.location[2] + ebone_location[2]))
+                    rotation = rotation.copy().inverted() #* quat_b.copy()
                     
                     
-                    bone.scale = Vector((1,1,1))
-                    #bone.location            = Vector((bt[3][0], bt[3][1], bt[3][2]))
                     
-                    #q = bt.inverted().decompose()[1]
-                    #q.w = -q.w
-                    #q.invert()
-                    #q.negate()
+                    w = rotation[0]
+                    x = rotation[1]
+                    y = rotation[2]
+                    z = rotation[3]
                     
-                    #bone.rotation_quaternion = q
+                    rotation.w =  w
+                    rotation.x =  x
+                    rotation.y = -z
+                    rotation.z = -y
                     
-                    # Set the bones in the dictionaries for future use.
-                    loc_parent_dic[bone_name] = loc
-                    rot_parent_dic[bone_name] = rot
+                    #rotation.invert()
                     
+                    axis_angle = rotation.to_axis_angle()
+                    
+                    _axis = axis_angle[0]
+                    
+                    angle = axis_angle[1]
+                  
+                    bpy.ops.object.select_pattern(pattern=bone_name)
+                    bpy.ops.pose.rot_clear()
+                    
+                    #rotation.negate()
+                    
+                    
+                    #bpy.ops.transform.rotate(value=angle,axis=(_axis[1], _axis[0], -_axis[2]), constraint_orientation='LOCAL')
+                    
+                    #rot_a = Quaternion()
+                    #rot_a[1] = -rotation[2]
+                    #rot_a[2] = -rotation[3]
+                    #rot_a[3] = -rotation[0]
+                    #rot_a[0] = rotation[1]
+                    #bone.rotation_quaternion = rotation
+                    
+                    print(_axis)
+                    
+                    bpy.ops.transform.rotate(value=angle,axis=(_axis[0], _axis[1], _axis[2]), constraint_orientation='LOCAL')
+                    #bpy.ops.transform.rotate(value=angle,axis=(_axis[1], _axis[2], _axis[0]))#, constraint_orientation='LOCAL')
+                    
+                    
+                    #bpy.ops.transform.rotate(value=-angle,axis=(_axis[1], _axis[2], _axis[0]))#, constraint_orientation='LOCAL')
+                    
+                    
+                    #bpy.ops.transform.rotate(value=angle,axis=(       0, -_axis[0],        0), constraint_orientation='LOCAL')
+                    #bpy.ops.transform.rotate(value=angle,axis=(       0,         0, _axis[2]), constraint_orientation='LOCAL')
+                    
+                    #Euler
+                    
+                    bpy.ops.pose.select_all(action='DESELECT')
+                    
+                    #if bone_name == "Bip01_R_Clavicle":
+                        #print(bone_name)
+                        #print("Quat Matrix: ")
+                        #print(k_matrix)
+                        #print("Result matrix")
+                        #print(k_rot2)
+                        #print(bone.rotation_quaternion)
+                        #print()
+                    #print("Bone: " + bone_name + " (" + str(bone_id) + ")")
+                        
                     bpy.context.scene.update()
                     
-                    bpy.ops.object.select_pattern(pattern=bone_name)
-                        
                     # Increment the offset.
                     bone_offset += 1
                 
+                for bone in p_bones:
+                    bpy.ops.object.select_pattern(pattern=bone.name)
+                
                 try:
                     # Create a Blender KeyFrame at this offset.
-                    bpy.ops.anim.keyframe_insert_menu(type='BUILTIN_KSI_LocRot')
+                    bpy.ops.anim.keyframe_insert_menu(type='Location')
+                    
+                    bpy.ops.anim.keyframe_insert_menu(type='Rotation')
                 except:
                     ok = None
-                
+                    
                 # De-select all bones to optimize the Blender KeyFrame.
                 bpy.ops.pose.select_all(action='DESELECT')
-                
+
                 # Increment the offset.
                 frame_offset += 1
             
@@ -794,10 +855,13 @@ class ZomboidImport(Operator, ImportHelper):
         if self.has_armature and self.load_armature:
             # Create the Armature for proceeding animation data
             self.create_armature()
+            
+            
+            #
+            #self.apply_pose()
         
-        #if self.has_animations:
-            # WIP for now.
-            #self.create_animations()
+        if self.load_animations and self.has_animations:
+            self.create_animations()
         
         # Check for meshes with Blend data and no armature.
         if self.has_armature == False and self.has_vert_bone_data == True and self.load_model_weights:
@@ -831,6 +895,7 @@ class ZomboidImport(Operator, ImportHelper):
         
         return {'FINISHED'}
         
+
     def __init__(self):
         self.vertexStrideData                   = dict()
         self.bone_matrix_bind_pose_data         = dict()
@@ -883,6 +948,8 @@ class ZomboidImport(Operator, ImportHelper):
 
 
 class Animation:
+    
+    
     def __init__(self,name,time,frame_count):
         self.name                               = name
         self.time                               = time
@@ -893,17 +960,74 @@ class Animation:
 
 
 class Frame:
-    def __init__(self):
+
+
+    def calculate(self, zomboid_import):
+        self.update_bone_transforms(zomboid_import)
+        self.update_world_transforms(zomboid_import)
+        
+        
+    def update_bone_transforms(self, zomboid_import):
+        for index, key_frame in enumerate(self.key_frames):
+            
+            bone_name = zomboid_import.bone_names[index]
+            bone_transform = matrix_from_quaternion_position(key_frame.rot, key_frame.loc)
+            
+            self.bone_transforms[bone_name] = bone_transform
+            self.bone_matrices_index[bone_name] = key_frame.bone_index
+    
+    
+    def update_world_transforms(self, zomboid_import):
+        identity = set_identity()
+        temp_vec = Vector((0.0, 1.0, 0.0))
+        identity = rotate(0.0, temp_vec, identity)
+        self.world_transforms['Root'] = self.bone_transforms['Root'] * identity
+        
+        for bone_index in range(1, len(zomboid_import.bone_names)):
+            bone_name         = zomboid_import.bone_names[bone_index]
+            parent_bone_index = zomboid_import.bone_parent[bone_index]
+            parent_name       = zomboid_import.bone_names[parent_bone_index]
+            
+            self.world_transforms[bone_name] = self.bone_transforms[bone_name] * self.world_transforms[parent_name]
+            
+            
+    def update_skin_transforms(self, zomboid_import):
+        
+        bone_offsets = zomboid_import.bone_matrix_offset_data
+        
+        for bone_index in range(0, len(zomboid_import.bone_names)):
+            
+            bone_name = zomboid_import.bone_names[index]
+            
+            self.skin_transforms[bone_name] = bone_offsets[bone_name] * self.world_transforms[bone_name]
+    
+    
+    
+    def __init__(self, bone_count, zomboid_import):
+        
+        self.bone_matrices_index                = dict()
+        self.bone_transforms                    = dict()
+        self.world_transforms                   = dict()
+        self.skin_transforms                    = dict()
+        self.bone_matrices                      = dict()
+        
+        self.key_frames                         = []
         self.bones                              = []
         self.bone_names                         = []
         self.times                              = []    
         self.bone_mats                          = []
-        self.bone_locs                          = []
-        self.bone_rots                          = []
+        self.bone_locs                          = dict()
+        self.bone_rots                          = dict()
         
+        for bone_name in zomboid_import.bone_names:
+            self.bone_transforms[bone_name]  = set_identity()
+            self.world_transforms[bone_name] = set_identity()
+            self.skin_transforms[bone_name]  = set_identity()
         
         
 class KeyFrame:
+    
+    
     def __init__(self,bone_index,bone_name,frame_time,mat):
         self.bone_index                         = bone_index
         self.bone_name                          = bone_name
@@ -962,204 +1086,69 @@ def read_vector(file):
 def read_quaternion(file):
     line = read_line(file)
     split = line.split(", ")
-    quat = Quaternion()
+    q = Quaternion()
     
-    quat.x = float(split[0])
-    quat.y = float(split[1])
-    quat.z = float(split[2])
-    quat.w = float(split[3])
-    return quat
+    x = float(split[0])
+    y = float(split[1])
+    z = float(split[2])
+    w = float(split[3])
+
+    q[0] = w
+    q[1] = x
+    q[2] = y
+    q[3] = z
+    
+    return q
 
 
 def read_matrix(file):
-    matrix_line = []
-    for i in range(0,4):
-        matrix_array = []
-        string_mat = read_line(file).split(", ")
-        matrix_array.append(float(string_mat[0]))
-        matrix_array.append(float(string_mat[1]))
-        matrix_array.append(float(string_mat[2]))
-        matrix_array.append(float(string_mat[3]))
-        matrix_line.append((matrix_array[0],matrix_array[1],matrix_array[2],matrix_array[3]))
-    return Matrix((matrix_line[0], matrix_line[1], matrix_line[2], matrix_line[3]))
+    s1 = read_line(file).split(", ")
+    s2 = read_line(file).split(", ")
+    s3 = read_line(file).split(", ")
+    s4 = read_line(file).split(", ")
+    
+    m00 = float(s1[0])
+    m01 = float(s1[1])
+    m02 = float(s1[2])
+    m03 = float(s1[3])
+    m04 = float(s2[0])
+    m05 = float(s2[1])
+    m06 = float(s2[2])
+    m07 = float(s2[3])
+    m08 = float(s3[0])
+    m09 = float(s3[1])
+    m10 = float(s3[2])
+    m11 = float(s3[3])
+    m12 = float(s4[0])
+    m13 = float(s4[1])
+    m14 = float(s4[2])
+    m15 = float(s4[3])
 
-#####################################################################################
-###                                                                               ###
-###   Matrix methods                                                              ###
-###       (Note: Java-translated methods to test accuracy of Animation code.)     ###
-###        Will likely get rid of these.                                          ###
-###                                                                               ###
-#####################################################################################
-    
-def matrix_from_quaternion_position(quaternion, position):
-    
-    mat = matrix_from_quaternion(quaternion)
-    mat2 = set_identity()
-    mat2 = translate(position, mat2)
-    #mat2 = mat2.transposed().copy()
-    #print(mat)
-    #mat3 = mat2 * mat
-    mat3 = mul(mat2, mat)
-    return mat3
+#    m = Matrix(
+#        ([m00, m01, m02, m03],
+#        [m04, m05, m06, m07],
+#        [m08, m09, m10, m11],
+#        [m12, m13, m14, m15]))
+#    return m
 
-
-def translate(vec,src=None):
-    
-    m = Matrix.Identity(4)
-    set_identity(m)
-    
-    if src == None:
-        set_identity(src)
-    
-    m[3][0] += src[0][0] * vec.x + src[1][0] * vec.y + src[2][0] * vec.z
-    m[3][1] += src[0][1] * vec.x + src[1][1] * vec.y + src[2][1] * vec.z
-    m[3][2] += src[0][2] * vec.x + src[1][2] * vec.y + src[2][2] * vec.z
-    m[3][3] += src[0][3] * vec.x + src[1][3] * vec.y + src[2][3] * vec.z
-
-    return m
-
-def length(quat):
-    return math.sqrt(quat.x * quat.x + quat.y * quat.y + quat.z * quat.z + quat.w * quat.w)
-
-
-def matrix_from_quaternion(quaternion):
-    
-    m = set_identity()
-    
-    q = quaternion
-    
-    if length(quaternion) > 0.0:
-        q = quaternion.normalized()
-    
-    xx = (q.x) * (q.x)
-    xy = (q.x) * (q.y)
-    xz = (q.x) * (q.z)
-    wx = (q.x) * (q.w)
-    
-    yy = (q.y) * (q.y)
-    yz = (q.y) * (q.z)
-    wy = (q.y) * (q.w)
-    
-    zz = (q.z) * (q.z)
-    wz = (q.z) * (q.w)
-    
-    m[0][0] = 1.0 - 2.0 * (float(yy) + float(zz))
-    m[1][0] =       2.0 * (float(xy) - float(wz))
-    m[2][0] =       2.0 * (float(xz) + float(wy))
-    m[3][0] = 0.0
-    
-    m[0][1] =       2.0 * (float(xy) + float(wz))
-    m[1][1] = 1.0 - 2.0 * (float(xx) + float(zz))
-    m[2][1] =       2.0 * (float(yz) - float(wx)) * float(1.0)
-    m[3][1] = 0.0
-    
-    m[0][2] =       2.0 * (float(xz) - float(wy))
-    m[1][2] =       2.0 * (float(yz) + float(wx))
-    m[2][2] = 1.0 - 2.0 * (float(xx) + float(yy))
-    m[3][2] = 0.0
-    
-    m[0][3] = 0.0
-    m[1][3] = 0.0
-    m[2][3] = 0.0
-    m[3][3] = 1.0
-    
-    return m.transposed().copy()
-
-
-def rotate(angle, axis, src):
-    m = set_identity()
-    
-    c = math.cos(angle)
-    s = math.sin(angle)
-    oneminusc = 1.0 - c
-    
-    xy = axis[0] * axis[1]
-    yz = axis[1] * axis[2]
-    xz = axis[0] * axis[2]
-    
-    xs = axis[0] * s
-    ys = axis[1] * s
-    zs = axis[2] * s
-    
-    f00 = axis[0] * axis[0] * oneminusc + c
-    f01 = xy * oneminusc + zs
-    f02 = xz * oneminusc - ys
-    
-    f10 = xy * oneminusc - zs
-    f11 = axis[1] * axis[1] * oneminusc + c
-    f12 = yz * oneminusc + xs
-    
-    f20 = xz * oneminusc + ys
-    f21 = yz * oneminusc - xs
-    f22 = axis[2] * axis[2] * oneminusc + c
-    
-    t00 = src[0][0] * f00 + src[1][0] * f01 + src[2][0] * f02
-    t01 = src[0][1] * f00 + src[1][1] * f01 + src[2][1] * f02
-    t02 = src[0][2] * f00 + src[1][2] * f01 + src[2][2] * f02
-    t03 = src[0][3] * f00 + src[1][3] * f01 + src[2][3] * f02
-    
-    t10 = src[0][0] * f10 + src[1][0] * f11 + src[2][0] * f12
-    t11 = src[0][1] * f10 + src[1][1] * f11 + src[2][1] * f12
-    t12 = src[0][2] * f10 + src[1][2] * f11 + src[2][2] * f12
-    t13 = src[0][3] * f10 + src[1][3] * f11 + src[2][3] * f12
-    
-    m[2][0] = (src[0][0] * f20 + src[1][0] * f21 + src[2][0] * f22)
-    m[2][1] = (src[0][1] * f20 + src[1][1] * f21 + src[2][1] * f22)
-    m[2][2] = (src[0][2] * f20 + src[1][2] * f21 + src[2][2] * f22)
-    m[2][3] = (src[0][3] * f20 + src[1][3] * f21 + src[2][3] * f22)
-    
-    m[0][0] = t00
-    m[0][1] = t01
-    m[0][2] = t02
-    m[0][3] = t03
-    
-    m[1][0] = t10
-    m[1][1] = t11
-    m[1][2] = t12
-    m[1][3] = t13
-    
+    m = Matrix(
+        ([m00, m04, m08, m12],
+         [m01, m05, m09, m13],
+         [m02, m06, m10, m14],
+         [m03, m07, m11, m15]))
     return m
 
 
-def mul(left,right,dest=Matrix.Identity(4)):
-    if dest == None:
-        dest = set_identity()
-    
-    dest[0][0] = left[0][0] * right[0][0] + left[1][0] * right[0][1] + left[2][0] * right[0][2] + left[3][0] * right[0][3]
-    dest[0][1] = left[0][1] * right[0][0] + left[1][1] * right[0][1] + left[2][1] * right[0][2] + left[3][1] * right[0][3]
-    dest[0][2] = left[0][2] * right[0][0] + left[1][2] * right[0][1] + left[2][2] * right[0][2] + left[3][2] * right[0][3]
-    dest[0][3] = left[0][3] * right[0][0] + left[1][3] * right[0][1] + left[2][3] * right[0][2] + left[3][3] * right[0][3]
-    dest[1][0] = left[0][0] * right[1][0] + left[1][0] * right[1][1] + left[2][0] * right[1][2] + left[3][0] * right[1][3]
-    dest[1][1] = left[0][1] * right[1][0] + left[1][1] * right[1][1] + left[2][1] * right[1][2] + left[3][1] * right[1][3]
-    dest[1][2] = left[0][2] * right[1][0] + left[1][2] * right[1][1] + left[2][2] * right[1][2] + left[3][2] * right[1][3]
-    dest[1][3] = left[0][3] * right[1][0] + left[1][3] * right[1][1] + left[2][3] * right[1][2] + left[3][3] * right[1][3]
-    dest[2][0] = left[0][0] * right[2][0] + left[1][0] * right[2][1] + left[2][0] * right[2][2] + left[3][0] * right[2][3]
-    dest[2][1] = left[0][1] * right[2][0] + left[1][1] * right[2][1] + left[2][1] * right[2][2] + left[3][1] * right[2][3]
-    dest[2][2] = left[0][2] * right[2][0] + left[1][2] * right[2][1] + left[2][2] * right[2][2] + left[3][2] * right[2][3]
-    dest[2][3] = left[0][3] * right[2][0] + left[1][3] * right[2][1] + left[2][3] * right[2][2] + left[3][3] * right[2][3]
-    dest[3][0] = left[0][0] * right[3][0] + left[1][0] * right[3][1] + left[2][0] * right[3][2] + left[3][0] * right[3][3]
-    dest[3][1] = left[0][1] * right[3][0] + left[1][1] * right[3][1] + left[2][1] * right[3][2] + left[3][1] * right[3][3]
-    dest[3][2] = left[0][2] * right[3][0] + left[1][2] * right[3][1] + left[2][2] * right[3][2] + left[3][2] * right[3][3]
-    dest[3][3] = left[0][3] * right[3][0] + left[1][3] * right[3][1] + left[2][3] * right[3][2] + left[3][3] * right[3][3]
-    
-    return dest
+def quat_equals(q1,q2):
+    return q1.w == q2.w and q1.x == q2.x and q1.y == q2.y and q1.z == q2.z
 
 
-def set_identity(mat=Matrix.Identity(4)):
-    mat[0][0] = 1.0
-    mat[0][1] = 0.0
-    mat[0][2] = 0.0
-    mat[0][3] = 0.0
-    mat[1][0] = 0.0
-    mat[1][1] = 1.0
-    mat[1][2] = 0.0
-    mat[1][3] = 0.0
-    mat[2][0] = 0.0
-    mat[2][1] = 0.0
-    mat[2][2] = 1.0
-    mat[2][3] = 0.0
-    mat[3][0] = 0.0
-    mat[3][1] = 0.0
-    mat[3][2] = 0.0
-    mat[3][3] = 1.0
-    return mat
+quat_transform_y_positive = Euler((pi/2, 0, 0),"XYZ").to_quaternion()
+
+
+matrix_3_transform_y_positive = Matrix((( 1, 0, 0 )   ,( 0, 0, 1 )   ,( 0,-1, 0 )                  ))
+matrix_4_transform_y_positive = Matrix((( 1, 0, 0, 0 ),( 0, 0, 1, 0 ),( 0,-1, 0, 0 ),( 0, 0, 0, 1 )))
+
+
+matrix_3_transform_z_positive = Matrix((( 1, 0, 0 )   ,( 0, 0,-1 )   ,( 0, 1, 0 )                  ))
+matrix_4_transform_z_positive = Matrix((( 1, 0, 0, 0 ),( 0, 0,-1, 0 ),( 0, 1, 0, 0 ),( 0, 0, 0, 1 )))

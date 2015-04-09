@@ -110,6 +110,7 @@ class ZomboidExport(Operator, ExportHelper):
                 weights = ""
                 indexes = ""
                 offset = 0
+     
                 for bid, bone_value in enumerate(weight_vert_data[vid]):
                     if bone_value > 0.0:
                        bone_id  = bone_id_table[weight_bone_names[bid]]
@@ -278,7 +279,7 @@ class ZomboidExport(Operator, ExportHelper):
         for vert in self.verts:
             #vert = self.verts[key]
             if self.mesh_has_vertex_array:
-                write_vector_3(file, vert.co)
+                write_vector_3(file, (vert.co) * matrix_3_transform_z_positive)
             if self.mesh_has_normal_array:
                 write_vector_3(file, vert.normal)
             if self.mesh_has_tangent_array:
@@ -536,3 +537,6 @@ def get_bone_id_table(armature):
             continue
     
     return bone_ids
+
+matrix_3_transform_z_positive = Matrix((( 1, 0, 0 )   ,( 0, 0,-1 )   ,( 0, 1, 0 )                  ))
+matrix_4_transform_z_positive = Matrix((( 1, 0, 0, 0 ),( 0, 0,-1, 0 ),( 0, 1, 0, 0 ),( 0, 0, 0, 1 )))
