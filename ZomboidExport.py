@@ -279,11 +279,11 @@ class ZomboidExport(Operator, ExportHelper):
         for vert in self.verts:
             #vert = self.verts[key]
             if self.mesh_has_vertex_array:
-                write_vector_3(file, (vert.co) * matrix_3_transform_z_positive)
+                write_vector_3(file, (vert.co     ) * matrix_3_transform_z_positive)
             if self.mesh_has_normal_array:
-                write_vector_3(file, vert.normal)
+                write_vector_3(file, (vert.normal ) * matrix_3_transform_z_positive)
             if self.mesh_has_tangent_array:
-                write_vector_3(file, vert.tangent)
+                write_vector_3(file, (vert.tangent) * matrix_3_transform_z_positive)
             if self.mesh_has_uv_mapping:
                 write_uv(file, vert.texture_coord)
             if self.mesh_has_bone_weights:
