@@ -595,7 +595,7 @@ class ZomboidImport(Operator, ImportHelper):
                 bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))
         
         bpy.ops.armature.select_all(action='SELECT')
-        bpy.ops.armature.calculate_roll(type='GLOBAL_Z')
+        bpy.ops.armature.calculate_roll(type='GLOBAL_POS_Z')
         
         bpy.ops.armature.select_all(action='DESELECT')
     
