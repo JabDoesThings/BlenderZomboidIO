@@ -362,12 +362,30 @@ class ZomboidImport(Operator, ImportHelper):
             
             # Select the model Object in Blender
             bpy.ops.object.select_pattern(pattern=self.modelName)
-            # Set the parent to the Armature.
-            obj.parent = obj_armature
-            obj.parent_type = 'ARMATURE'
-            # Modify the Object with the Armature.
-            modifier = bpy.ops.object.modifier_add(type='ARMATURE')
-            # Return to Object mode.
+          
+            # Set the parent to the Armature. 
+            #########################################################################
+            # <--- 2.74 and earlier. This method worked. Breaks in 2.75.            #
+            #########################################################################
+            # obj.parent = obj_armature                                             #
+            # obj.parent_type = 'OBJECT'                                            #
+            # Modify the Object with the Armature.                                  #
+            # modifier = bpy.ops.object.modifier_add(type='ARMATURE')               #
+            #########################################################################
+    
+            # Set the parent to the Armature. 
+            #########################################################################
+            # scorpion81's fix. 2.75 --->                                           #
+            #########################################################################            
+            oldactive = bpy.context.active_object                                   #
+            bpy.context.scene.objects.active = obj_armature                         #
+            obj.select = True                                                       #
+            bpy.ops.object.parent_set(type='ARMATURE')                              #
+            bpy.context.scene.objects.active = oldactive                            #
+            obj.select = False                                                      #
+            #########################################################################
+
+            # Return to Object mode.            
             bpy.ops.object.mode_set(mode = 'OBJECT')
             
             # Create Vertex Groups here for each bone and set the Vertex accordingly.
@@ -448,10 +466,10 @@ class ZomboidImport(Operator, ImportHelper):
                                                                                  #
         self.world_transforms.append(mat_world)                                  #
         self.bones.append(bone)                                                  #
-        
                                                                                  #
-        self.bone_location.append(mat_world.decompose()[0])
-                                                                                 
+                                                                                 #
+        self.bone_location.append(mat_world.decompose()[0])                      #
+                                                                                 #
         bone.matrix = mat_world                                                  #
         bone.tail   = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075)) #
         ##########################################################################
@@ -484,16 +502,16 @@ class ZomboidImport(Operator, ImportHelper):
             #-----------------------------------------------------------------------------------#
             # TODO: Could improve this by using the bind-pose rotation to create the rest pose. #
             #       Might have to do this later.                                                #
-            print("Quaternion: " + str(matrix_rotation.decompose()[1]))
-            
+            print("Quaternion: " + str(matrix_rotation.decompose()[1]))                         #
+                                                                                                #
             bone.head = mat.decompose()[0]                                                      #
-            bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))               #
+            bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))              #
                                                                                                 #
             if parent_index != -1:                                                              #
                 if bone.tail[0] == 0 and bone.tail[1] == 0 and bone.tail[2] == 0:               #
-                    bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))       #
+                    bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))      #
             else:                                                                               #
-                bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))           #
+                bone.tail = Vector((bone.head[0], bone.head[1], bone.head[2] + 0.075))          #
             #####################################################################################
             
             bone.parent = parent_bone
