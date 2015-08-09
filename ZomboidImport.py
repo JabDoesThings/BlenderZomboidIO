@@ -114,7 +114,7 @@ class ZomboidImport(Operator, ImportHelper):
                     line = read_line(file)
                     vs = line.split(', ')
 
-                    self.verts.append(Vector((float(vs[0]), float(vs[1]), float(vs[2]))) )#* matrix_3_transform_y_positive)
+                    self.verts.append(Vector((float(vs[0]), float(vs[1]), float(vs[2]))) * matrix_3_transform_y_positive)
 
                 elif self.vertexStrideType[element] == "TextureCoordArray":
                     line = read_line(file)
@@ -209,7 +209,7 @@ class ZomboidImport(Operator, ImportHelper):
         for index in range(0,self.numberBones):
             boneIndex          = read_int(file)
             bone_offset_matrix = read_matrix(file)
-            self.bone_matrix_offset_data[index] = bone_offset_matrix.copy() #* matrix_4_transform_y_positive
+            self.bone_matrix_offset_data[index] = bone_offset_matrix.copy() * matrix_4_transform_y_positive
     
     
     # Animations:
@@ -273,7 +273,7 @@ class ZomboidImport(Operator, ImportHelper):
                     
                 bone_name  = read_line(file)
                 frame_time = read_float(file)
-                loc        = read_vector(file) #* matrix_3_transform_y_positive
+                loc        = read_vector(file) * matrix_3_transform_y_positive
                 rot        = read_quaternion(file) 
                 mat        = rot.to_matrix().to_4x4() * Matrix.Translation(loc).to_4x4()
                 
@@ -523,8 +523,8 @@ class ZomboidImport(Operator, ImportHelper):
             print("Creating Bone: \t" + bone.name + "index: \t\t\t" + str(x) + " parent_index: \t" + str(parent_index))
         
            
-        #if self.should_optimize_armature:
-        #    self.optimize_armature()
+        if self.should_optimize_armature:
+            self.optimize_armature()
         
         bpy.ops.object.mode_set(mode='OBJECT')
         
@@ -539,8 +539,12 @@ class ZomboidImport(Operator, ImportHelper):
     
     def optimize_armature(self):
         for x in range(1, self.numberBones):
-          
+            
+            
             bone_name = self.bone_names[x]
+            
+            if bone_name == 'Bip01':
+                continue
             
             bone = self.armature.edit_bones[bone_name]
             bone_tail = bone.tail
@@ -550,12 +554,12 @@ class ZomboidImport(Operator, ImportHelper):
                     if "Neck" in bone_name:
                         bone.tail = bone.children[2].head
                         continue
-                    #if "Bip01" == bone_name:
-                        #bone.tail = bone.children[0].head
+                    if "Bip01" == bone_name:
+                        bone.tail = bone.children[0].head
                         
 
                 if bone.children != None:
-                    if bone.children[0] != None:
+                    if bone.children[0] != None and "Bip01" != bone_name:
                         bone.tail = bone.children[0].head
             except:
                 bone.tail = bone_tail
@@ -1239,9 +1243,7 @@ m3 = Matrix(
          [0, 0, -1],
          [0, 1, 0]))
 
-#matrix_3_transform_y_positive = Matrix((( 1, 0, 0 )   ,( 0, 0, 1 )   ,( 0,-1, 0 )                  ))
-#matrix_4_transform_y_positive = Matrix((( 1, 0, 0, 0 ),( 0, 0, 1, 0 ),( 0,-1, 0, 0 ),( 0, 0, 0, 1 )))
-
-
-#matrix_3_transform_z_positive = Matrix((( 1, 0, 0 )   ,( 0, 0,-1 )   ,( 0, 1, 0 )                  ))
-#matrix_4_transform_z_positive = Matrix((( 1, 0, 0, 0 ),( 0, 0,-1, 0 ),( 0, 1, 0, 0 ),( 0, 0, 0, 1 )))
+matrix_3_transform_y_positive = Matrix((( 1, 0, 0 )   ,( 0, 0, 1 )   ,( 0,-1, 0 )                  ))
+matrix_4_transform_y_positive = Matrix((( 1, 0, 0, 0 ),( 0, 0, 1, 0 ),( 0,-1, 0, 0 ),( 0, 0, 0, 1 )))
+matrix_3_transform_z_positive = Matrix((( 1, 0, 0 )   ,( 0, 0,-1 )   ,( 0, 1, 0 )                  ))
+matrix_4_transform_z_positive = Matrix((( 1, 0, 0, 0 ),( 0, 0,-1, 0 ),( 0, 1, 0, 0 ),( 0, 0, 0, 1 )))
