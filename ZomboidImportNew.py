@@ -381,8 +381,8 @@ class ZomboidImport(Operator, ImportHelper):
         
         # Go through each Animation.
         for animation in z.animations:
-            if animation.name != "Idle":
-                continue
+            # if animation.name != "Idle":
+            #     continue
             if self.DEBUG == True:
                 print("Rendering Animation: " + animation.name + "...")
             
