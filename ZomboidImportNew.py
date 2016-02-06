@@ -376,11 +376,13 @@ class ZomboidImport(Operator, ImportHelper):
         bpy.ops.object.select_pattern(pattern=s.name)
         bpy.ops.object.mode_set(mode='POSE')
         bpy.ops.pose.select_all(action='DESELECT')
-        
+        a
         frame_offset = 0
         
         # Go through each Animation.
         for animation in z.animations:
+            s.object.animation_data_create()
+            s.object.animation_data.action = bpy.data.actions.new(animation.name)
             # if animation.name != "Idle":
             #     continue
             if self.DEBUG == True:
@@ -402,8 +404,9 @@ class ZomboidImport(Operator, ImportHelper):
             for frame in animation.frames:
                 bpy.data.scenes[0].frame_current = frame_offset                    
                 
-                if self.DEBUG == True:
-                    print('Rendering Frame: ' + str(frame_offset))
+                s.armature
+                #if self.DEBUG == True:
+                    #print('Rendering Frame: ' + str(frame_offset))
                 
                 for bone_index in range(0, s.bone_count):
                     bone_name    = s.bone_name[bone_index]
