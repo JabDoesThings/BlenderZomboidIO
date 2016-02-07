@@ -353,7 +353,18 @@ class ZomboidImport(Operator, ImportHelper):
                 
             skeleton.bones[bone_index] = skeleton.bones[bone_name] = bone
             bone.head = Vector((0, 0, 0    ))
-            skeleton.bind_pose[bone_name] = skeleton.bind_pose[bone_index] = bone.matrix = skeleton.offset_matrix[bone_index].to_blender_matrix().inverted()
+            
+            mat = skeleton.offset_matrix[bone_index].to_blender_matrix().inverted()
+            
+            if bone_name == 'Bip01':
+                print(bone_name + ": ")
+                print("Offset Before: ")
+                print(skeleton.offset_matrix[bone_index])
+                print("Offset After: ")
+                print(to_lwjgl_matrix(blender_matrix=mat.copy().inverted()))
+                
+            skeleton.bind_pose[bone_name] = mat
+            bone.matrix = mat
             bone.tail = Vector((bone.head.x, bone.head.y + 0.075, bone.head.z)) 
         
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -376,15 +387,16 @@ class ZomboidImport(Operator, ImportHelper):
         bpy.ops.object.select_pattern(pattern=s.name)
         bpy.ops.object.mode_set(mode='POSE')
         bpy.ops.pose.select_all(action='DESELECT')
-        a
+        
         frame_offset = 0
         
         # Go through each Animation.
         for animation in z.animations:
-            s.object.animation_data_create()
+            if animation.name != "Run":
+                continue
+            s.object.animation_data_create();
             s.object.animation_data.action = bpy.data.actions.new(animation.name)
-            # if animation.name != "Idle":
-            #     continue
+            s.object.animation_data.action.use_fake_user = 1
             if self.DEBUG == True:
                 print("Rendering Animation: " + animation.name + "...")
             
@@ -407,6 +419,11 @@ class ZomboidImport(Operator, ImportHelper):
                 s.armature
                 #if self.DEBUG == True:
                     #print('Rendering Frame: ' + str(frame_offset))
+                
+                # 1) Turn the translation and rotation into a Frame Matrix
+                # 2) Create a World Matrix by multiplying the Parent World Matrix with the Frame Matrix
+                # 3) Create the Product Matrix by multiplying the World Matrix with the Bone Matrix
+                
                 
                 for bone_index in range(0, s.bone_count):
                     bone_name    = s.bone_name[bone_index]
@@ -860,6 +877,9 @@ class Matrix4f():
         self.m32 = 0.0
         self.m33 = 1.0
         
+    def __str__(self):
+        return 'Matrix4f' + '\n[' + efloat(self.m00) + ', ' + efloat(self.m01) + ', ' + efloat(self.m02) + ', ' + efloat(self.m03) + '],\n[' + efloat(self.m10) + ', ' + efloat(self.m11) + ', ' + efloat(self.m12) + ', ' + efloat(self.m13) + '],\n[' + efloat(self.m20) + ', ' + efloat(self.m21) + ', ' + efloat(self.m22) + ', ' + efloat(self.m23) + '],\n[' + efloat(self.m30) + ', ' + efloat(self.m31) + ', ' + efloat(self.m32) + ', ' + efloat(self.m33) + ']'
+        
     def set_identity(self):
         self.m00 = 1.0
         self.m01 = 0.0
@@ -905,6 +925,27 @@ class Matrix4f():
           [self.m02, self.m12, self.m22, self.m32],
           [self.m03, self.m13, self.m23, self.m33]))
         return m.transposed()
+
+def to_lwjgl_matrix(blender_matrix):
+    m = Matrix4f()
+    b = blender_matrix.copy().transposed()
+    m.m00 = b[0][0]
+    m.m01 = b[1][0]
+    m.m02 = b[2][0]
+    m.m03 = b[3][0]
+    m.m10 = b[0][1]
+    m.m11 = b[1][1]
+    m.m12 = b[2][1]
+    m.m13 = b[3][1]
+    m.m20 = b[0][2]
+    m.m21 = b[1][2]
+    m.m22 = b[2][2]
+    m.m23 = b[3][2]
+    m.m30 = b[0][3]
+    m.m31 = b[1][3]
+    m.m32 = b[2][3]
+    m.m33 = b[3][3]
+    return m
 
 def translate(vec, src, dest):
     if dest == None:
@@ -1000,3 +1041,18 @@ scale_matrix_4 = Matrix(
                  [ 0,1,0,0],
                  [ 0,0,1,0],
                  [ 0,0,0,1]))
+  
+def get_keyframes(obj_list):
+    keyframes = []
+    for obj in obj_list:
+        anim = obj.animation_data
+        if anim is not None and anim.action is not None:
+            for fcu in anim.action.fcurves:
+                for keyframe in fcu.keyframe_points:
+                    x, y = keyframe.co
+                    if x not in keyframes:
+                        keyframes.append((math.ceil(x)))
+    return keyframes
+
+def efloat(float):
+    return "%0.8f" % float
